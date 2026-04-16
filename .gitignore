@@ -5,6 +5,7 @@ config.yaml
 __pycache__/
 *.pyc
 .env
+.pytest_cache/
 full_inventory.json
 test_samples.json
 tui_poc.py
