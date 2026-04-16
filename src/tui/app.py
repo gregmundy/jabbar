@@ -11,13 +11,22 @@ from src.tui.widgets.charts import MonthlySpendChart, CategoryChart
 
 def load_tui_data(data_dir: str) -> dict:
     transactions = []
+    seen_ids = set()
     insights = {"alerts": [], "recurring": [], "categories": {}, "monthly_summary": [], "recommendations": [], "scams_detected": []}
 
-    tx_path = os.path.join(data_dir, "extracted", "transactions.json")
-    if os.path.exists(tx_path):
-        with open(tx_path) as f:
-            all_tx = json.load(f)
-            transactions = [t for t in all_tx if t.get("is_transaction")]
+    # Load all transaction files (transactions.json + transactions_*.json)
+    extracted_dir = os.path.join(data_dir, "extracted")
+    if os.path.isdir(extracted_dir):
+        for fname in sorted(os.listdir(extracted_dir)):
+            if fname.startswith("transactions") and fname.endswith(".json"):
+                fpath = os.path.join(extracted_dir, fname)
+                with open(fpath) as f:
+                    for t in json.load(f):
+                        if t.get("is_transaction"):
+                            tid = t.get("email_id", id(t))
+                            if tid not in seen_ids:
+                                transactions.append(t)
+                                seen_ids.add(tid)
 
     insights_path = os.path.join(data_dir, "analysis", "insights.json")
     if os.path.exists(insights_path):

@@ -18,8 +18,16 @@ def parse_args(argv: list[str] = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "command", nargs="?", default="run",
-        choices=["setup", "fetch", "extract", "analyze", "run", "tui"],
+        choices=["setup", "fetch", "extract", "analyze", "run", "tui", "ingest"],
         help="Command to run (default: run)",
+    )
+    parser.add_argument(
+        "--csv", default=None,
+        help="Path to bank statement CSV file (used with 'ingest' command)",
+    )
+    parser.add_argument(
+        "--source", default="bank",
+        help="Source name for ingested data (e.g., 'discover', 'chase')",
     )
     return parser.parse_args(argv)
 
@@ -151,6 +159,15 @@ def main(argv: list[str] = None) -> None:
     except ConfigError as e:
         print(f"Config error: {e}")
         sys.exit(1)
+
+    if args.command == "ingest":
+        from src.ingest.csv_ingest import ingest_csv
+        if not args.csv:
+            print("Error: --csv path required for ingest command.")
+            print("Usage: jabbar ingest --csv statement.csv --source discover")
+            sys.exit(1)
+        ingest_csv(args.csv, args.source, args.data_dir)
+        return
 
     if args.command == "fetch":
         cmd_fetch(config, args.data_dir)
