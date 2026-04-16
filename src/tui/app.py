@@ -149,6 +149,3 @@ class JabbarApp(App):
                 str(r.get("months_active", "")),
                 r.get("category", ""),
             )
-
-    def action_toggle_dark(self) -> None:
-        self.dark = not self.dark
