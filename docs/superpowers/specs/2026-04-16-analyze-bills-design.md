@@ -1,4 +1,6 @@
-# Analyze Bills — Design Specification
+# Jabbar — Design Specification
+
+**Jabbar** — Email-powered financial intelligence.
 
 ## Purpose
 
@@ -160,7 +162,7 @@ Each stage writes output to disk so stages can be re-run independently:
 ## File Structure
 
 ```
-analyze-bills/
+jabbar/
 ├── config.yaml              # User configuration (gitignored)
 ├── config.example.yaml      # Template with placeholder values
 ├── requirements.txt         # Python dependencies
@@ -470,11 +472,11 @@ The local LLM and Claude have different scam detection roles:
 Main Textual application.
 
 ```python
-class AnalyzeBillsApp(App):
+class JabbarApp(App):
     """
     TUI with tabbed interface:
     
-    Header: Shows "Analyze Bills" title with clock
+    Header: Shows "Jabbar" title with clock
     
     Summary bar: Total tracked spend, monthly average, emails scanned, connected providers
     
@@ -508,10 +510,17 @@ class AnalyzeBillsApp(App):
     """
 ```
 
+## Branding
+
+- Product name: **Jabbar**
+- TUI header title: "Jabbar"
+- TUI subtitle: "Email Financial Intelligence"
+- CLI command: `jabbar` (via setuptools entry_points or a shell alias to `python -m src.main`)
+
 ## CLI Entry Point
 
 ```
-Usage: python -m src.main [command]
+Usage: jabbar [command]  # or: python -m src.main [command]
 
 Commands:
   setup     — Interactive config creation (prompts for email accounts)
