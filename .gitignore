@@ -1,0 +1,10 @@
+venv/
+data/
+config.yaml
+.hotmail_tokens.json
+__pycache__/
+*.pyc
+.env
+full_inventory.json
+test_samples.json
+tui_poc.py
