@@ -37,6 +37,74 @@ def load_tui_data(data_dir: str) -> dict:
     return {"transactions": transactions, "insights": insights}
 
 
+def build_merchant_summary(transactions: list[dict], recurring: list[dict] = None) -> list[dict]:
+    from datetime import datetime
+
+    # Build recurring lookup
+    rec_lookup = {}
+    if recurring:
+        for r in recurring:
+            rec_lookup[r.get("merchant", "")] = r
+
+    # Group by merchant
+    merchants = defaultdict(lambda: {"amounts": [], "dates": [], "category": ""})
+    for t in transactions:
+        m = t.get("merchant")
+        if not m:
+            continue
+        amt = t.get("amount")
+        if amt is not None and amt > 0:
+            merchants[m]["amounts"].append(amt)
+            if t.get("date"):
+                merchants[m]["dates"].append(t["date"])
+            if not merchants[m]["category"]:
+                merchants[m]["category"] = t.get("category", "")
+
+    # Build summary rows
+    result = []
+    for merchant, data in merchants.items():
+        amounts = data["amounts"]
+        dates = sorted(data["dates"])
+        if not amounts:
+            continue
+
+        total = sum(amounts)
+        count = len(amounts)
+        avg = total / count
+
+        # Calculate monthly average based on date span
+        if len(dates) >= 2:
+            try:
+                first = datetime.strptime(dates[0], "%Y-%m-%d")
+                last = datetime.strptime(dates[-1], "%Y-%m-%d")
+                months_span = max(1, (last - first).days / 30)
+            except ValueError:
+                months_span = 1
+            avg_monthly = total / months_span
+        else:
+            months_span = 1
+            avg_monthly = total
+
+        # Overlay recurring info from Claude analysis
+        rec = rec_lookup.get(merchant, {})
+
+        result.append({
+            "merchant": merchant,
+            "count": count,
+            "total": total,
+            "avg": avg,
+            "avg_monthly": avg_monthly,
+            "first_seen": dates[0] if dates else "",
+            "last_seen": dates[-1] if dates else "",
+            "category": data["category"],
+            "frequency": rec.get("frequency", ""),
+            "trend": rec.get("trend", ""),
+        })
+
+    result.sort(key=lambda r: r["total"], reverse=True)
+    return result
+
+
 def _fmt_currency(val: float) -> str:
     if val >= 1_000_000:
         return f"${val / 1_000_000:,.1f}M"
@@ -277,6 +345,10 @@ class JabbarApp(App):
                     cats = dict(cats)
                 yield CategoryChart(cats)
 
+            # ── Merchants Tab ──
+            with TabPane("Merchants", id="merchants"):
+                yield DataTable(id="merchant-table")
+
             # ── Transactions Tab ──
             with TabPane("Transactions", id="transactions"):
                 yield DataTable(id="tx-table")
@@ -290,6 +362,33 @@ class JabbarApp(App):
     def _populate_tables(self) -> None:
         tx = self._data["transactions"]
         insights = self._data["insights"]
+
+        # Merchant summary table
+        merchant_table = self.query_one("#merchant-table")
+        merchant_table.add_columns(
+            "Merchant", "Count", "Total", "Avg", "Monthly Avg", "Frequency", "Trend", "First Seen", "Last Seen", "Category"
+        )
+        merchant_table.cursor_type = "row"
+        merchant_table.zebra_stripes = True
+
+        recurring = insights.get("recurring", [])
+        merchant_rows = build_merchant_summary(tx, recurring=recurring)
+        for m in merchant_rows:
+            trend = m["trend"]
+            trend_icon = {"increasing": "↑", "decreasing": "↓", "stable": "→"}.get(trend, "")
+            freq = m["frequency"]
+            merchant_table.add_row(
+                m["merchant"][:30],
+                str(m["count"]),
+                f"${m['total']:,.2f}",
+                f"${m['avg']:,.2f}",
+                f"${m['avg_monthly']:,.2f}",
+                freq if freq else "—",
+                f"{trend_icon} {trend}" if trend else "—",
+                m["first_seen"],
+                m["last_seen"],
+                (m["category"] or "").replace("_", " "),
+            )
 
         # Transaction table
         table = self.query_one("#tx-table")
