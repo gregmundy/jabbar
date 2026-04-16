@@ -189,14 +189,7 @@ jabbar/
 │   │   └── claude_analyzer.py  # Claude API final analysis
 │   └── tui/
 │       ├── __init__.py
-│       ├── app.py           # Main Textual app
-│       ├── screens/
-│       │   ├── __init__.py
-│       │   ├── alerts.py    # Alerts tab
-│       │   ├── monthly.py   # Monthly spending chart
-│       │   ├── categories.py # Category breakdown chart
-│       │   ├── transactions.py # Transaction table
-│       │   └── recurring.py # Recurring charges table
+│       ├── app.py           # Main Textual app (all tabs in one file for v1)
 │       └── widgets/
 │           ├── __init__.py
 │           └── charts.py    # PlotextPlot subclasses
