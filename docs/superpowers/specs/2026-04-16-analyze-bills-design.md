@@ -29,7 +29,11 @@ The following were tested and validated during the design phase. Do not change t
 ### IMAP Search Strategy
 - Search within a configurable date range (default: 24 months)
 - Use individual keyword searches, NOT compound OR queries (Yahoo's IMAP rejects complex OR nesting)
-- Keywords: `receipt`, `payment`, `invoice`, `order`, `charge`, `billing`, `subscription`, `renewal`, `purchase`, `transaction`, `statement`, `autopay`, `trial`, `refund`
+- Keywords (35 total, validated via IMAP search gap analysis):
+  - Core transaction: `receipt`, `payment`, `invoice`, `order`, `charge`, `billing`, `subscription`, `renewal`, `purchase`, `transaction`, `statement`, `autopay`, `trial`, `refund`
+  - Broader financial: `bill`, `confirmation`, `balance`, `reminder`, `credit`, `deposit`, `shipped`, `membership`, `overdue`
+  - Insurance/loans/investments: `coverage`, `payoff`, `policy`, `expiring`, `loan`, `insurance`, `transfer`, `cashback`, `tax`, `claim`, `dividend`
+  - Urgency: `action required`
 - Deduplicate message IDs across keyword searches before processing
 - Date format for IMAP SINCE: `%d-%b-%Y` (e.g., `16-Apr-2024`)
 

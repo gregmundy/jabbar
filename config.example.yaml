@@ -31,6 +31,7 @@ accounts:
 scan:
   months_back: 24
   keywords:
+    # Core transaction signals
     - receipt
     - payment
     - invoice
@@ -45,6 +46,30 @@ scan:
     - autopay
     - trial
     - refund
+    # Broader financial signals
+    - bill
+    - confirmation
+    - balance
+    - reminder
+    - credit
+    - deposit
+    - shipped
+    - membership
+    - overdue
+    # Insurance, loans, investments
+    - coverage
+    - payoff
+    - policy
+    - expiring
+    - loan
+    - insurance
+    - transfer
+    - cashback
+    - tax
+    - claim
+    - dividend
+    # Urgency signals
+    - action required
 
 extraction:
   llm_endpoint: "http://localhost:1234/v1/chat/completions"
