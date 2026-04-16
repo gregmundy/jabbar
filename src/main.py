@@ -29,6 +29,10 @@ def parse_args(argv: list[str] = None) -> argparse.Namespace:
         "--source", default="bank",
         help="Source name for ingested data (e.g., 'discover', 'chase')",
     )
+    parser.add_argument(
+        "--tag", default=None,
+        help="Tag for grouping data sources (e.g., 'Personal', 'Work')",
+    )
     return parser.parse_args(argv)
 
 
@@ -69,6 +73,10 @@ def cmd_fetch(config: dict, data_dir: str) -> list[dict]:
             print(f"  Found {len(msg_ids)} financial emails")
 
             emails = fetch_and_cache(conn, msg_ids, name, data_dir)
+            tag = account.get("tag")
+            if tag:
+                for e in emails:
+                    e["tag"] = tag
             all_emails.extend(emails)
 
             conn.logout()
@@ -166,7 +174,7 @@ def main(argv: list[str] = None) -> None:
             print("Error: --csv path required for ingest command.")
             print("Usage: jabbar ingest --csv statement.csv --source discover")
             sys.exit(1)
-        ingest_csv(args.csv, args.source, args.data_dir)
+        ingest_csv(args.csv, args.source, args.data_dir, tag=args.tag)
         return
 
     if args.command == "fetch":

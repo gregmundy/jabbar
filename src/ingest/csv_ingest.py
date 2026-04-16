@@ -152,6 +152,7 @@ def map_category(discover_category: str) -> str:
 def parse_csv_statement(
     csv_path: str,
     source_name: str = "bank_csv",
+    tag: str = None,
 ) -> list[dict]:
     transactions = []
 
@@ -195,6 +196,7 @@ def parse_csv_statement(
                 "provider": source_name,
                 "raw_subject": raw_desc,
                 "extraction_source": "csv",
+                "tag": tag,
             })
 
     return transactions
@@ -204,6 +206,7 @@ def ingest_csv(
     csv_path: str,
     source_name: str,
     data_dir: str,
+    tag: str = None,
 ) -> list[dict]:
     output_path = os.path.join(data_dir, "extracted", f"transactions_{source_name}.json")
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -217,7 +220,7 @@ def ingest_csv(
             existing_ids = {t["email_id"] for t in existing if "email_id" in t}
 
     # Parse new transactions
-    new_transactions = parse_csv_statement(csv_path, source_name)
+    new_transactions = parse_csv_statement(csv_path, source_name, tag=tag)
 
     # Deduplicate
     added = 0

@@ -7,6 +7,7 @@ accounts:
     imap_host: imap.gmail.com
     imap_port: 993
     mailbox: '"[Gmail]/All Mail"'
+    tag: Personal              # optional — groups data sources
 
   - name: yahoo
     provider: yahoo
@@ -16,6 +17,7 @@ accounts:
     imap_host: imap.mail.yahoo.com
     imap_port: 993
     mailbox: INBOX
+    tag: Personal
 
   - name: hotmail
     provider: hotmail
@@ -27,6 +29,7 @@ accounts:
     imap_host: outlook.office365.com
     imap_port: 993
     mailbox: INBOX
+    tag: Work
 
 scan:
   months_back: 24

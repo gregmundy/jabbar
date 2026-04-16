@@ -114,6 +114,7 @@ def extract_all(
             extracted["provider"] = email_info["provider"]
             extracted["raw_subject"] = subject
             extracted["extraction_source"] = source
+            extracted["tag"] = email_info.get("tag")
             results.append(extracted)
 
         with open(output_path, "w") as f:

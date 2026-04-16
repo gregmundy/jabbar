@@ -293,7 +293,11 @@ class JabbarApp(App):
 
         # Transaction table
         table = self.query_one("#tx-table")
-        table.add_columns("Date", "Source", "Merchant", "Amount", "Category", "Description")
+        has_tags = any(t.get("tag") for t in tx)
+        columns = ["Date", "Source", "Merchant", "Amount", "Category", "Description"]
+        if has_tags:
+            columns.insert(2, "Tag")
+        table.add_columns(*columns)
         table.cursor_type = "row"
         table.zebra_stripes = True
 
@@ -304,14 +308,17 @@ class JabbarApp(App):
                 amt_str = f"${amt:,.2f}" if amt >= 0 else f"-${abs(amt):,.2f}"
             else:
                 amt_str = ""
-            table.add_row(
+            row = [
                 t.get("date", ""),
                 t.get("provider", ""),
                 (t.get("merchant") or "")[:30],
                 amt_str,
                 (t.get("category") or "").replace("_", " "),
                 (t.get("description") or "")[:50],
-            )
+            ]
+            if has_tags:
+                row.insert(2, t.get("tag") or "")
+            table.add_row(*row)
 
         # Recurring table
         rec_table = self.query_one("#rec-table")
