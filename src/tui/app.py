@@ -1,12 +1,17 @@
+import email as email_lib
 import json
 import os
 from collections import defaultdict
+from email.header import decode_header
 
+from rich.markup import escape as esc
 from textual.app import App
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.screen import ModalScreen
 from textual.theme import Theme
 from textual.widgets import Header, Footer, Static, DataTable, TabbedContent, TabPane, Rule
 
+from src.preprocess.html_stripper import get_email_body
 from src.tui.widgets.charts import MonthlySpendChart, CategoryChart
 
 
@@ -115,6 +120,130 @@ def _fmt_currency(val: float) -> str:
 
 class SummaryCard(Static):
     pass
+
+
+def _decode_header(value: str) -> str:
+    if not value:
+        return ""
+    decoded = decode_header(value)
+    return " ".join(
+        p.decode(e or "utf-8", errors="replace") if isinstance(p, bytes) else p
+        for p, e in decoded
+    )
+
+
+class EmailInspectorScreen(ModalScreen):
+    BINDINGS = [("escape", "dismiss", "Close")]
+
+    DEFAULT_CSS = """
+    EmailInspectorScreen {
+        align: center middle;
+    }
+    #inspector-container {
+        width: 90%;
+        height: 90%;
+        background: $surface;
+        border: thick $primary;
+        padding: 1 2;
+    }
+    #inspector-title {
+        background: $primary 20%;
+        padding: 0 1;
+        margin-bottom: 1;
+        text-style: bold;
+    }
+    #inspector-scroll {
+        padding: 0 1;
+    }
+    .section-header {
+        color: $primary;
+        text-style: bold;
+        margin-top: 1;
+    }
+    """
+
+    def __init__(self, transaction: dict, data_dir: str):
+        super().__init__()
+        self.transaction = transaction
+        self.data_dir = data_dir
+
+    def compose(self):
+        with Container(id="inspector-container"):
+            email_id = self.transaction.get("email_id", "")
+            yield Static(f"Email: {email_id}   —   Esc to close", id="inspector-title")
+            with VerticalScroll(id="inspector-scroll"):
+                yield Static(self._render_metadata())
+                body = self._render_body()
+                if body:
+                    yield Static("── Body (what the LLM saw) ──", classes="section-header")
+                    yield Static(body, markup=False)
+
+    def _eml_path(self) -> str | None:
+        provider = self.transaction.get("provider")
+        email_id = self.transaction.get("email_id")
+        if not provider or not email_id:
+            return None
+        return os.path.join(self.data_dir, "raw", provider, f"{email_id}.eml")
+
+    def _render_metadata(self) -> str:
+        t = self.transaction
+        source = t.get("extraction_source", "")
+        lines: list[str] = []
+
+        if source == "csv":
+            lines.append(f"[b]Source:[/] CSV ({esc(t.get('provider') or '')})")
+            raw_desc = t.get("raw_subject") or ""
+            lines.append(f"[b]Description:[/] {esc(raw_desc)}")
+        else:
+            eml_path = self._eml_path()
+            if eml_path and os.path.exists(eml_path):
+                try:
+                    with open(eml_path, "rb") as f:
+                        msg = email_lib.message_from_bytes(f.read())
+                    lines.append(f"[b]From:[/] {esc(_decode_header(msg.get('From', '')))}")
+                    lines.append(f"[b]Subject:[/] {esc(_decode_header(msg.get('Subject', '')))}")
+                    lines.append(f"[b]Date:[/] {esc(msg.get('Date', '—'))}")
+                except OSError as e:
+                    lines.append(f"[dim]Could not read {esc(eml_path)}: {esc(str(e))}[/]")
+            else:
+                lines.append(f"[dim]No .eml file at {esc(eml_path or 'unknown path')}[/]")
+
+        provider = t.get("provider") or "—"
+        tag = t.get("tag") or "—"
+        lines.append(f"[b]Provider:[/] {esc(provider)}   [b]Tag:[/] {esc(tag)}")
+
+        lines.append("")
+        lines.append("[b]── Extracted ──[/]")
+
+        amt = t.get("amount")
+        amt_str = f"${amt:,.2f}" if isinstance(amt, (int, float)) else "—"
+        lines.append(f"[b]Merchant:[/] {esc(str(t.get('merchant') or '—'))}")
+        lines.append(f"[b]Amount:[/] {esc(amt_str)}   [b]Date:[/] {esc(str(t.get('date') or '—'))}")
+        category = (t.get("category") or "—").replace("_", " ")
+        lines.append(f"[b]Category:[/] {esc(category)}")
+        lines.append(f"[b]Recurring:[/] {esc(str(t.get('is_recurring')))}")
+        desc = t.get("description")
+        if desc:
+            lines.append(f"[b]Description:[/] {esc(str(desc))}")
+
+        return "\n".join(lines)
+
+    def _render_body(self) -> str:
+        if self.transaction.get("extraction_source") == "csv":
+            return ""
+        eml_path = self._eml_path()
+        if not eml_path or not os.path.exists(eml_path):
+            return ""
+        try:
+            with open(eml_path, "rb") as f:
+                raw = f.read()
+        except OSError:
+            return ""
+        body, _ = get_email_body(raw, 20000)
+        return body
+
+    def action_dismiss(self):
+        self.dismiss()
 
 
 class JabbarApp(App):
@@ -256,6 +385,7 @@ class JabbarApp(App):
         super().__init__(**kwargs)
         self._data_dir = data_dir
         self._data = load_tui_data(data_dir)
+        self._tx_by_id: dict[str, dict] = {}
 
     def on_mount(self) -> None:
         self._populate_tables()
@@ -417,7 +547,12 @@ class JabbarApp(App):
             ]
             if has_tags:
                 row.insert(2, t.get("tag") or "")
-            table.add_row(*row)
+            row_key = t.get("email_id")
+            if row_key:
+                self._tx_by_id[row_key] = t
+                table.add_row(*row, key=row_key)
+            else:
+                table.add_row(*row)
 
         # Recurring table
         rec_table = self.query_one("#rec-table")
@@ -439,3 +574,13 @@ class JabbarApp(App):
                 f"{r.get('months_active', '')} mo",
                 (r.get("category") or "").replace("_", " "),
             )
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        if event.data_table.id != "tx-table":
+            return
+        row_key = getattr(event.row_key, "value", event.row_key)
+        if not row_key:
+            return
+        tx = self._tx_by_id.get(row_key)
+        if tx:
+            self.push_screen(EmailInspectorScreen(tx, self._data_dir))

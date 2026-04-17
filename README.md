@@ -63,7 +63,7 @@ The Discover CSV format is supported out of the box; other banks may need adjust
 - **Transactions** — filterable raw transaction list
 - **Recurring** — Claude's detected recurring charges with monthly/annual cost
 
-`q` quits, `d` toggles dark/light.
+`q` quits, `d` toggles dark/light. On the **Transactions** tab, press `Enter` on a row to open an email inspector showing the original headers, the stripped body the LLM saw, and the extracted fields side-by-side — useful when a merchant/amount/date looks wrong. `Esc` closes the inspector.
 
 The TUI reads only from `data/` and does not require `config.yaml`, a local LLM, or an API key — it's safe to hand off a `data/` directory and run the UI on another machine.
 
