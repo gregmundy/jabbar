@@ -379,6 +379,7 @@ class JabbarApp(App):
     BINDINGS = [
         ("q", "quit", "Quit"),
         ("d", "toggle_dark", "Dark/Light"),
+        ("r", "reload", "Reload"),
     ]
 
     def __init__(self, data_dir: str = "data", **kwargs):
@@ -388,7 +389,8 @@ class JabbarApp(App):
         self._tx_by_id: dict[str, dict] = {}
 
     def on_mount(self) -> None:
-        self._populate_tables()
+        self._setup_table_columns()
+        self._populate_table_rows()
 
     def compose(self):
         yield Header(show_clock=True)
@@ -410,15 +412,15 @@ class JabbarApp(App):
 
         # Summary bar
         with Horizontal(id="summary-bar"):
-            yield SummaryCard(f"TOTAL SPEND\n{_fmt_currency(total)}", classes="summary-card -accent")
-            yield SummaryCard(f"MONTHLY AVG\n{_fmt_currency(avg)}", classes="summary-card")
-            yield SummaryCard(f"RECURRING\n{_fmt_currency(recurring_total)}/mo", classes="summary-card")
-            yield SummaryCard(f"TRANSACTIONS\n{len(tx):,}", classes="summary-card")
+            yield SummaryCard(f"TOTAL SPEND\n{_fmt_currency(total)}", id="sc-total", classes="summary-card -accent")
+            yield SummaryCard(f"MONTHLY AVG\n{_fmt_currency(avg)}", id="sc-monthly", classes="summary-card")
+            yield SummaryCard(f"RECURRING\n{_fmt_currency(recurring_total)}/mo", id="sc-recurring", classes="summary-card")
+            yield SummaryCard(f"TRANSACTIONS\n{len(tx):,}", id="sc-tx", classes="summary-card")
             if red_count or yellow_count:
                 alert_str = f"{red_count} critical" if red_count else ""
                 if yellow_count:
                     alert_str += f"{'  ' if alert_str else ''}{yellow_count} warnings"
-                yield SummaryCard(f"ALERTS\n{alert_str}", classes="summary-card -accent")
+                yield SummaryCard(f"ALERTS\n{alert_str}", id="sc-alerts", classes="summary-card -accent")
 
         with TabbedContent():
             # ── Alerts Tab ──
@@ -489,11 +491,9 @@ class JabbarApp(App):
 
         yield Footer()
 
-    def _populate_tables(self) -> None:
+    def _setup_table_columns(self) -> None:
         tx = self._data["transactions"]
-        insights = self._data["insights"]
 
-        # Merchant summary table
         merchant_table = self.query_one("#merchant-table")
         merchant_table.add_columns(
             "Merchant", "Count", "Total", "Avg", "Monthly Avg", "Frequency", "Trend", "First Seen", "Last Seen", "Category"
@@ -501,6 +501,27 @@ class JabbarApp(App):
         merchant_table.cursor_type = "row"
         merchant_table.zebra_stripes = True
 
+        tx_table = self.query_one("#tx-table")
+        has_tags = any(t.get("tag") for t in tx)
+        columns = ["Date", "Source", "Merchant", "Amount", "Category", "Description"]
+        if has_tags:
+            columns.insert(2, "Tag")
+        tx_table.add_columns(*columns)
+        tx_table.cursor_type = "row"
+        tx_table.zebra_stripes = True
+        self._tx_has_tag_col = has_tags
+
+        rec_table = self.query_one("#rec-table")
+        rec_table.add_columns("Merchant", "Freq", "Monthly", "Annual", "Trend", "Active", "Category")
+        rec_table.cursor_type = "row"
+        rec_table.zebra_stripes = True
+
+    def _populate_table_rows(self) -> None:
+        tx = self._data["transactions"]
+        insights = self._data["insights"]
+
+        # Merchant summary table
+        merchant_table = self.query_one("#merchant-table")
         recurring = insights.get("recurring", [])
         merchant_rows = build_merchant_summary(tx, recurring=recurring)
         for m in merchant_rows:
@@ -522,13 +543,8 @@ class JabbarApp(App):
 
         # Transaction table
         table = self.query_one("#tx-table")
-        has_tags = any(t.get("tag") for t in tx)
-        columns = ["Date", "Source", "Merchant", "Amount", "Category", "Description"]
-        if has_tags:
-            columns.insert(2, "Tag")
-        table.add_columns(*columns)
-        table.cursor_type = "row"
-        table.zebra_stripes = True
+        has_tags = getattr(self, "_tx_has_tag_col", False)
+        self._tx_by_id.clear()
 
         sorted_tx = sorted(tx, key=lambda t: t.get("date") or "", reverse=True)
         for t in sorted_tx:
@@ -556,13 +572,8 @@ class JabbarApp(App):
 
         # Recurring table
         rec_table = self.query_one("#rec-table")
-        rec_table.add_columns("Merchant", "Freq", "Monthly", "Annual", "Trend", "Active", "Category")
-        rec_table.cursor_type = "row"
-        rec_table.zebra_stripes = True
-
-        recurring = insights.get("recurring", [])
-        recurring.sort(key=lambda r: r.get("monthly_cost", 0), reverse=True)
-        for r in recurring:
+        recurring_sorted = sorted(recurring, key=lambda r: r.get("monthly_cost", 0), reverse=True)
+        for r in recurring_sorted:
             trend = r.get("trend", "")
             trend_icon = {"increasing": "↑", "decreasing": "↓", "stable": "→"}.get(trend, "")
             rec_table.add_row(
@@ -574,6 +585,37 @@ class JabbarApp(App):
                 f"{r.get('months_active', '')} mo",
                 (r.get("category") or "").replace("_", " "),
             )
+
+    def _update_summary(self) -> None:
+        tx = self._data["transactions"]
+        insights = self._data["insights"]
+
+        amounts = [t.get("amount", 0) or 0 for t in tx]
+        total = sum(a for a in amounts if a > 0)
+        monthly_summary = insights.get("monthly_summary", [])
+        months = len(monthly_summary) if monthly_summary else 1
+        avg = total / months if months else 0
+        recurring_total = sum(r.get("monthly_cost", 0) for r in insights.get("recurring", []))
+
+        self.query_one("#sc-total", Static).update(f"TOTAL SPEND\n{_fmt_currency(total)}")
+        self.query_one("#sc-monthly", Static).update(f"MONTHLY AVG\n{_fmt_currency(avg)}")
+        self.query_one("#sc-recurring", Static).update(f"RECURRING\n{_fmt_currency(recurring_total)}/mo")
+        self.query_one("#sc-tx", Static).update(f"TRANSACTIONS\n{len(tx):,}")
+
+    def action_reload(self) -> None:
+        try:
+            self._data = load_tui_data(self._data_dir)
+        except (OSError, json.JSONDecodeError) as e:
+            self.notify(f"Reload failed: {e}", severity="warning", timeout=3)
+            return
+
+        for table_id in ("#tx-table", "#merchant-table", "#rec-table"):
+            self.query_one(table_id).clear()
+
+        self._populate_table_rows()
+        self._update_summary()
+
+        self.notify(f"Reloaded — {len(self._data['transactions'])} transactions", timeout=2)
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         if event.data_table.id != "tx-table":
