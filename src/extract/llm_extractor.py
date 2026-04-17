@@ -1,8 +1,11 @@
+import email as email_lib
 import json
 import os
 import re
 import time
 import urllib.request
+from email.header import decode_header
+from email.utils import parsedate_to_datetime
 
 
 EXTRACTION_PROMPT = """You are a financial data extractor. Analyze this email and extract any financial transaction.
@@ -37,9 +40,9 @@ TRANSACTION_SCHEMA = {
             "type": "object",
             "properties": {
                 "is_transaction": {"type": "boolean"},
-                "merchant": {"type": ["string", "null"]},
-                "date": {"type": ["string", "null"]},
-                "amount": {"type": ["number", "null"]},
+                "merchant": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+                "date": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+                "amount": {"anyOf": [{"type": "number"}, {"type": "null"}]},
                 "category": {
                     "type": "string",
                     "enum": [
@@ -48,9 +51,9 @@ TRANSACTION_SCHEMA = {
                         "transportation", "credit_card", "other", "scam",
                     ],
                 },
-                "description": {"type": ["string", "null"]},
-                "is_recurring": {"type": ["boolean", "null"]},
-                "payment_method": {"type": ["string", "null"]},
+                "description": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+                "is_recurring": {"anyOf": [{"type": "boolean"}, {"type": "null"}]},
+                "payment_method": {"anyOf": [{"type": "string"}, {"type": "null"}]},
             },
             "required": [
                 "is_transaction", "merchant", "date", "amount",
@@ -100,6 +103,21 @@ def extract_transaction(subject: str, body: str, config: dict) -> dict | None:
         return None
 
 
+def date_from_eml(path: str) -> str | None:
+    try:
+        with open(path, "rb") as f:
+            msg = email_lib.message_from_bytes(f.read())
+    except OSError:
+        return None
+    hdr = msg.get("Date")
+    if not hdr:
+        return None
+    try:
+        return parsedate_to_datetime(hdr).strftime("%Y-%m-%d")
+    except (TypeError, ValueError):
+        return None
+
+
 def extract_all(
     emails: list[dict],
     config: dict,
@@ -108,12 +126,26 @@ def extract_all(
     output_path = os.path.join(data_dir, "extracted", "transactions.json")
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
+    tag_map = {a["name"]: a.get("tag") for a in config.get("accounts", []) if a.get("tag")}
+
     existing = []
     existing_ids = set()
     if os.path.exists(output_path):
         with open(output_path) as f:
             existing = json.load(f)
             existing_ids = {e["email_id"] for e in existing}
+
+    # Backfill tag and date on existing records so reruns heal earlier bad data.
+    for rec in existing:
+        if not rec.get("tag"):
+            tag = tag_map.get(rec.get("provider"))
+            if tag:
+                rec["tag"] = tag
+        if not rec.get("date") and rec.get("provider") and rec.get("email_id"):
+            eml_path = os.path.join(data_dir, "raw", rec["provider"], f"{rec['email_id']}.eml")
+            date = date_from_eml(eml_path)
+            if date:
+                rec["date"] = date
 
     to_process = [e for e in emails if e["msg_id"] not in existing_ids]
     skipped = len(emails) - len(to_process)
@@ -131,9 +163,6 @@ def extract_all(
 
         body, source = get_email_body(raw, config["extraction"].get("max_body_chars", 8000))
 
-        import email as email_lib
-        from email.header import decode_header
-
         msg = email_lib.message_from_bytes(raw)
         subject = msg.get("Subject", "")
         if subject:
@@ -150,7 +179,14 @@ def extract_all(
             extracted["provider"] = email_info["provider"]
             extracted["raw_subject"] = subject
             extracted["extraction_source"] = source
-            extracted["tag"] = email_info.get("tag")
+            extracted["tag"] = email_info.get("tag") or tag_map.get(email_info["provider"])
+            if not extracted.get("date"):
+                hdr = msg.get("Date")
+                if hdr:
+                    try:
+                        extracted["date"] = parsedate_to_datetime(hdr).strftime("%Y-%m-%d")
+                    except (TypeError, ValueError):
+                        pass
             results.append(extracted)
 
         with open(output_path, "w") as f:
