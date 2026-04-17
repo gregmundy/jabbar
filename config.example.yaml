@@ -76,7 +76,7 @@ scan:
 
 extraction:
   llm_endpoint: "http://localhost:1234/v1/chat/completions"
-  llm_model: "qwen2.5-7b-instruct-mlx"
+  llm_model: "qwen2.5-14b-instruct-mlx"
   temperature: 0.1
   max_tokens: 500
   max_body_chars: 8000

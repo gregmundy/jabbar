@@ -24,7 +24,42 @@ Rules:
 - Marketing, promos, and rewards emails are NOT transactions
 - For credit card statements, extract the statement balance as the amount
 - Extract the most prominent/total dollar amount, not subtotals
+- Always extract the transaction date in YYYY-MM-DD format — required for deduplication
 - If the email appears to be a scam or phishing attempt, set category to "scam" and is_transaction to false"""
+
+
+TRANSACTION_SCHEMA = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "transaction",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "is_transaction": {"type": "boolean"},
+                "merchant": {"type": ["string", "null"]},
+                "date": {"type": ["string", "null"]},
+                "amount": {"type": ["number", "null"]},
+                "category": {
+                    "type": "string",
+                    "enum": [
+                        "subscription", "utilities", "food_dining", "food_delivery",
+                        "services", "shopping", "insurance", "medical",
+                        "transportation", "credit_card", "other", "scam",
+                    ],
+                },
+                "description": {"type": ["string", "null"]},
+                "is_recurring": {"type": ["boolean", "null"]},
+                "payment_method": {"type": ["string", "null"]},
+            },
+            "required": [
+                "is_transaction", "merchant", "date", "amount",
+                "category", "description", "is_recurring", "payment_method",
+            ],
+            "additionalProperties": False,
+        },
+    },
+}
 
 
 def parse_llm_response(raw: str) -> dict | None:
@@ -48,6 +83,7 @@ def extract_transaction(subject: str, body: str, config: dict) -> dict | None:
         ],
         "temperature": config["extraction"]["temperature"],
         "max_tokens": config["extraction"]["max_tokens"],
+        "response_format": TRANSACTION_SCHEMA,
     }
     req = urllib.request.Request(
         endpoint,

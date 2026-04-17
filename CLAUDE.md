@@ -35,7 +35,7 @@ Integration tests in `tests/test_integration.py` require a real `config.yaml` AN
 
 ## External dependencies that must be running
 
-- **Local LLM** (LM Studio serving `qwen2.5-7b-instruct-mlx` on `http://localhost:1234/v1/chat/completions`) — required for `extract`. `main.py` hits `/v1/models` first and exits if unreachable.
+- **Local LLM** (LM Studio serving `qwen2.5-14b-instruct-mlx` on `http://localhost:1234/v1/chat/completions`) — required for `extract`. `main.py` hits `/v1/models` first and exits if unreachable.
 - **Anthropic API** — `analyze` requires `ANTHROPIC_API_KEY` env var; the analyzer raises `RuntimeError` if unset.
 
 ## Pipeline architecture

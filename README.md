@@ -5,7 +5,7 @@ Email Financial Intelligence — pulls receipts, bills, and statements from your
 ## Prerequisites
 
 - **[uv](https://github.com/astral-sh/uv)** for dependency management (`brew install uv`)
-- **[LM Studio](https://lmstudio.ai/)** serving `qwen2.5-7b-instruct-mlx` on `http://localhost:1234` — required for the `extract` step
+- **[LM Studio](https://lmstudio.ai/)** serving `qwen2.5-14b-instruct-mlx` on `http://localhost:1234` — required for the `extract` step
 - **Anthropic API key** in `ANTHROPIC_API_KEY` — required for the `analyze` step
 - App passwords / OAuth2 client IDs for the email accounts you want to scan
 
