@@ -1,8 +1,10 @@
 import email as email_lib
 import json
 import os
+import re
 from collections import defaultdict
 from email.header import decode_header
+from email.utils import parseaddr
 
 from rich.markup import escape as esc
 from textual.app import App
@@ -13,6 +15,211 @@ from textual.widgets import Header, Footer, Static, DataTable, TabbedContent, Ta
 
 from src.preprocess.html_stripper import get_email_body
 from src.tui.widgets.charts import MonthlySpendChart, CategoryChart
+
+
+def _norm_merchant(m) -> str:
+    return (m or "").strip().lower() if isinstance(m, str) else ""
+
+
+def _completeness_score(rec: dict) -> int:
+    score = 0
+    if rec.get("merchant"):
+        score += 3
+    if rec.get("description"):
+        score += 1
+    if rec.get("category") and rec.get("category") != "other":
+        score += 1
+    if rec.get("is_recurring") is not None:
+        score += 1
+    return score
+
+
+def _merge_group(records: list[dict]) -> dict:
+    if len(records) == 1:
+        return records[0]
+    best = max(records, key=_completeness_score)
+    merged = dict(best)
+    ids = sorted({r.get("email_id") for r in records if r.get("email_id")})
+    merged["source_email_ids"] = ids
+    merged["merge_count"] = len(records)
+    return merged
+
+
+def dedupe_transactions(transactions: list[dict]) -> list[dict]:
+    """Collapse transactions that refer to the same real-world charge.
+
+    Keys on (date, rounded amount, normalized merchant). Transactions with an
+    empty merchant are absorbed into a uniquely-matching (date, amount) group
+    if one exists — this catches the common case where the LLM parses the
+    merchant from one email (a statement) but not another (a scheduled-payment
+    notice) for the same charge.
+    """
+    strict: dict[tuple, list[dict]] = defaultdict(list)
+    unkeyed: list[dict] = []
+
+    for t in transactions:
+        date = t.get("date")
+        amt = t.get("amount")
+        if not date or amt is None:
+            unkeyed.append(t)
+            continue
+        try:
+            amt_key = round(float(amt), 2)
+        except (TypeError, ValueError):
+            unkeyed.append(t)
+            continue
+        key = (date, amt_key, _norm_merchant(t.get("merchant")))
+        strict[key].append(t)
+
+    da_to_nonempty: dict[tuple, list[tuple]] = defaultdict(list)
+    for key in strict:
+        date, amt, m = key
+        if m:
+            da_to_nonempty[(date, amt)].append(key)
+
+    consumed: set[tuple] = set()
+    final: dict[tuple, list[dict]] = {}
+
+    for key in list(strict.keys()):
+        date, amt, m = key
+        if m:
+            continue
+        candidates = da_to_nonempty.get((date, amt), [])
+        if len(candidates) == 1:
+            target = candidates[0]
+            final.setdefault(target, list(strict[target]))
+            final[target].extend(strict[key])
+            consumed.add(key)
+
+    for key, records in strict.items():
+        if key in consumed:
+            continue
+        if key not in final:
+            final[key] = list(records)
+
+    result = [_merge_group(recs) for recs in final.values()]
+    result.extend(unkeyed)
+    return result
+
+
+MERCHANT_BY_DOMAIN = {
+    "wellsfargo.com": "Wells Fargo",
+    "chase.com": "Chase",
+    "jpmorganchase.com": "Chase",
+    "discover.com": "Discover",
+    "bankofamerica.com": "Bank of America",
+    "capitalone.com": "Capital One",
+    "americanexpress.com": "American Express",
+    "aexp.com": "American Express",
+    "usbank.com": "U.S. Bank",
+    "pnc.com": "PNC",
+    "pncbank.com": "PNC",
+    "citibank.com": "Citi",
+    "citi.com": "Citi",
+    "tdbank.com": "TD Bank",
+    "barclaysus.com": "Barclays",
+    "usaa.com": "USAA",
+    "navyfederal.org": "Navy Federal",
+    "synchrony.com": "Synchrony",
+    "syf.com": "Synchrony",
+    "ally.com": "Ally",
+    "fidelity.com": "Fidelity",
+    "vanguard.com": "Vanguard",
+    "schwab.com": "Charles Schwab",
+    "paypal.com": "PayPal",
+    "venmo.com": "Venmo",
+    "zelle.com": "Zelle",
+    "robinhood.com": "Robinhood",
+    "coinbase.com": "Coinbase",
+    "amazon.com": "Amazon",
+    "apple.com": "Apple",
+    "google.com": "Google",
+    "att.com": "AT&T",
+    "verizon.com": "Verizon",
+    "comcast.net": "Comcast",
+    "xfinity.com": "Xfinity",
+    "netflix.com": "Netflix",
+    "spotify.com": "Spotify",
+    "youtube.com": "YouTube",
+    "uber.com": "Uber",
+    "lyft.com": "Lyft",
+    "doordash.com": "DoorDash",
+    "grubhub.com": "Grubhub",
+    "progressive.com": "Progressive",
+    "geico.com": "GEICO",
+    "statefarm.com": "State Farm",
+    "allstate.com": "Allstate",
+    "anthem.com": "Anthem",
+    "firstenergy.com": "FirstEnergy",
+    "openai.com": "OpenAI",
+    "anthropic.com": "Anthropic",
+}
+
+
+_GENERIC_DISPLAY_NAME = re.compile(
+    r"^(no[-_.\s]?reply|donotreply|do[-_.\s]?not[-_.\s]?reply|notifications?|"
+    r"alerts?|info|support|admin|mailer|customer[-_.\s]?service|service|help|team)$",
+    re.I,
+)
+
+
+def merchant_from_sender(from_header) -> str | None:
+    """Infer a merchant name from an email's From: header.
+
+    Order of preference:
+    1. Curated domain map (with root-domain matching so subdomains resolve).
+    2. Display name, if it's not a generic role address (e.g., "no-reply").
+    3. Second-to-last domain label, title-cased.
+    """
+    if not from_header or not isinstance(from_header, str):
+        return None
+    name, addr = parseaddr(from_header)
+    if "@" not in (addr or ""):
+        return None
+    domain = addr.split("@", 1)[1].lower().strip().strip(">")
+    if not domain:
+        return None
+
+    parts = domain.split(".")
+    for i in range(len(parts)):
+        root = ".".join(parts[i:])
+        if root in MERCHANT_BY_DOMAIN:
+            return MERCHANT_BY_DOMAIN[root]
+
+    if name:
+        cleaned = re.sub(r"\s+", " ", name).strip().strip('"').strip("'")
+        if cleaned and not _GENERIC_DISPLAY_NAME.match(cleaned):
+            return cleaned
+
+    if len(parts) >= 2:
+        return parts[-2].title()
+    return None
+
+
+def _read_from_header(eml_path: str) -> str | None:
+    try:
+        with open(eml_path, "rb") as f:
+            msg = email_lib.message_from_bytes(f.read())
+    except OSError:
+        return None
+    return msg.get("From")
+
+
+def fill_merchants_from_sender(transactions: list[dict], data_dir: str) -> list[dict]:
+    """Fill empty merchants by inferring from each email's From: header."""
+    for t in transactions:
+        if t.get("merchant"):
+            continue
+        from_hdr = t.get("from_header")
+        if not from_hdr and t.get("provider") and t.get("email_id"):
+            eml_path = os.path.join(data_dir, "raw", t["provider"], f"{t['email_id']}.eml")
+            from_hdr = _read_from_header(eml_path)
+        if from_hdr:
+            inferred = merchant_from_sender(from_hdr)
+            if inferred:
+                t["merchant"] = inferred
+                t["merchant_source"] = "sender"
+    return transactions
 
 
 def load_tui_data(data_dir: str) -> dict:
@@ -33,6 +240,9 @@ def load_tui_data(data_dir: str) -> dict:
                             if tid not in seen_ids:
                                 transactions.append(t)
                                 seen_ids.add(tid)
+
+    transactions = dedupe_transactions(transactions)
+    transactions = fill_merchants_from_sender(transactions, data_dir)
 
     insights_path = os.path.join(data_dir, "analysis", "insights.json")
     if os.path.exists(insights_path):
@@ -212,12 +422,20 @@ class EmailInspectorScreen(ModalScreen):
         tag = t.get("tag") or "—"
         lines.append(f"[b]Provider:[/] {esc(provider)}   [b]Tag:[/] {esc(tag)}")
 
+        merge_count = t.get("merge_count")
+        if merge_count:
+            sources = t.get("source_email_ids") or []
+            lines.append(f"[b]Merged from:[/] {merge_count} emails  [dim]{esc(', '.join(sources))}[/]")
+
         lines.append("")
         lines.append("[b]── Extracted ──[/]")
 
         amt = t.get("amount")
         amt_str = f"${amt:,.2f}" if isinstance(amt, (int, float)) else "—"
-        lines.append(f"[b]Merchant:[/] {esc(str(t.get('merchant') or '—'))}")
+        merchant_display = esc(str(t.get("merchant") or "—"))
+        if t.get("merchant_source") == "sender":
+            merchant_display += " [dim](inferred from sender)[/]"
+        lines.append(f"[b]Merchant:[/] {merchant_display}")
         lines.append(f"[b]Amount:[/] {esc(amt_str)}   [b]Date:[/] {esc(str(t.get('date') or '—'))}")
         category = (t.get("category") or "—").replace("_", " ")
         lines.append(f"[b]Category:[/] {esc(category)}")
